@@ -1,0 +1,106 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'stop RDS DB based on the db name.'
+Resources:
+  StopRDStLambdaIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: StopRDSIAMRolePolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+              - logs:*
+              Resource: "arn:aws:logs:*:*:*"
+            - Effect: Allow
+              Action:
+              - ec2:Describe*
+              Resource: "*"
+            - Effect: Allow
+              Action:
+              - rds:DescribeTags
+              - rds:DescribeDBInstances
+              - rds:StartDBInstance
+              - rds:StopDBInstance             
+              Resource: "*"
+      Path: "/"
+
+  StopRDStCreationFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: "A Lambda function that stop te DB instance based on the cloudwatch schedule"
+      Handler: index.lambda_handler
+      Runtime: python2.7
+      Timeout: '30'
+      Role: !GetAtt StopRDStLambdaIAMRole.Arn
+      Code:
+        ZipFile: !Sub |
+          import logging
+          region ='eu-west-1'
+          
+          instances=['dbtest']
+          
+          def lambda_handler(event, context):
+              for instance in instances:
+                   try:
+                       rds_instance = boto3.client('rds', region_name=region)
+                       rds_instance.stop_db_instance(DBInstanceIdentifier=instance)
+                       print 'stopped your instances: ' + str(instance)
+                   except botocore.exceptions.ClientError as e:
+                       raise Exception("Could notstop db: %s" % e)
+   StartRDStCreationFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: "A Lambda function that start te DB instance based on the cloudwatch schedule"
+      Handler: index.lambda_handler
+      Runtime: python2.7
+      Timeout: '30'
+      Role: !GetAtt StopRDStLambdaIAMRole.Arn
+      Code:
+        ZipFile: !Sub |
+          import logging
+          region ='eu-west-1'
+          
+          instances=['dbtest']
+          
+          def lambda_handler(event, context):
+              for instance in instances:
+                   try:
+                       rds_instance = boto3.client('rds', region_name=region)
+                       rds_instance.start_db_instance(DBInstanceIdentifier=instance)
+                       print 'stopped your instances: ' + str(instance)
+                   except botocore.exceptions.ClientError as e:
+                       raise Exception("Could notstart db: %s" % e)          
+  StopRDSCreationScheduleRule:
+    Type: "AWS::Events::Rule"
+    Properties:
+      Description: "Run the EBS snapshot creation script daily"
+      Name: "StopRDSCreationScheduleRule"
+      ScheduleExpression: "cron(0 18 * * ? *)"
+      State: "ENABLED"
+      Targets:
+        - Arn: !GetAtt StopRDStCreationFunction.Arn
+          Id: 'StopRDStCreationFunction'
+
+  # Permissions to Lambda functions to be run from CloudWatch events
+  PermissionForEventsToInvokeCreationLambda:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      FunctionName: !Ref StopRDStCreationFunction
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: !GetAtt StopRDSCreationScheduleRule.Arn
+
+ 

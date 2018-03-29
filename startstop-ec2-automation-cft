@@ -1,0 +1,151 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Stop and start Ec2 instance based on the tag.'
+
+Resources:
+  StopstartLambdaIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: StopstartIAMRolePolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+              - logs:*
+              Resource: "arn:aws:logs:*:*:*"
+            - Effect: Allow
+              Action:
+              - ec2:Describe*
+              Resource: "*"
+            - Effect: Allow
+              Action:
+              - ec2:Start*
+              - ec2:Stop*
+              - ec2:CreateTags
+              - ec2:ModifySnapshotAttribute
+              - ec2:ResetSnapshotAttribute
+              Resource: "*"
+      Path: "/"
+
+  StartCreationFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: "A Lambda function that creates snapshots of EBS volumes"
+      Handler: index.lambda_handler
+      Runtime: python2.7
+      Timeout: '30'
+      Role: !GetAtt StopstartLambdaIAMRole.Arn
+      Code:
+        ZipFile: !Sub |
+          import boto3
+          import logging
+          
+          ec2 = boto3.resource('ec2')
+          
+          def lambda_handler(event, context):
+          
+              filters = [{
+                      'Name': 'tag:AutoStart', 
+                      'Values': ['Yes'] 
+                  },
+          
+                  {
+                      'Name': 'instance-state-name', 
+                      'Values': ['stopped']
+                  }
+              ]
+              
+              instances = ec2.instances.filter(Filters=filters)
+              
+              stoppedInstances = [instance.id for instance in instances]
+              
+              
+              if len(stoppedInstances) > 0:
+                  startingUp = ec2.instances.filter(InstanceIds=stoppedInstances).start()       
+  StopCreationFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: "A Lambda function that cleans up snapshots at their Retention date"
+      Handler: index.lambda_handler
+      Runtime: python2.7
+      Timeout: '30'
+      Role: !GetAtt StopstartLambdaIAMRole.Arn
+      Code:
+        ZipFile: !Sub |
+          import boto3
+          import logging
+          
+          ec2 = boto3.resource('ec2')
+          
+          def lambda_handler(event, context):
+          
+              filters = [{
+                      'Name': 'tag:AutoStop', 
+                      'Values': ['Yes'] 
+                  },
+          
+                  {
+                      'Name': 'instance-state-name', 
+                      'Values': ['running']
+                  }
+              ]
+              
+              instances = ec2.instances.filter(Filters=filters)
+              
+              startedInstances = [instance.id for instance in instances]
+              
+              print startedInstances
+              if len(startedInstances) > 0:
+                  shuttingDown = ec2.instances.filter(InstanceIds=startedInstances).stop()
+  # Run the snapshot Lambda functions every day
+  StartCreationScheduleRule:
+    Type: "AWS::Events::Rule"
+    Properties:
+      Description: "Run the EBS snapshot creation script daily"
+      Name: "StartCreationScheduleRule"
+      ScheduleExpression: "cron(0 18 * * ? *)"
+      State: "ENABLED"
+      Targets:
+        - Arn: !GetAtt StartCreationFunction.Arn
+          Id: 'StartCreationFunction'
+
+  # Permissions to Lambda functions to be run from CloudWatch events
+  PermissionForEventsToInvokeCreationLambda:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      FunctionName: !Ref StartCreationFunction
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: !GetAtt StartCreationScheduleRule.Arn
+
+  # Run the snapshot Lambda functions every day
+  StopcreationScheduleRule:
+    Type: "AWS::Events::Rule"
+    Properties:
+      Description: "Run the EBS snapshot cleanup script daily"
+      Name: "StopcreationScheduleRule"
+      ScheduleExpression: "cron(0 19 * * ? *)"
+      State: "ENABLED"
+      Targets:
+        - Arn: !GetAtt StopCreationFunction.Arn
+          Id: 'StopCreationFunction'
+
+  PermissionForEventsToInvokeCleanupLambda:
+    Type: "AWS::Lambda::Permission"
+    Properties:
+      FunctionName: !Ref StopCreationFunction
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: !GetAtt StopcreationScheduleRule.Arn
