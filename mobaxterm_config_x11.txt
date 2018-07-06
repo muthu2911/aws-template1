@@ -1,0 +1,19 @@
+mobaxterm
+
+Download the 
+xorg-x11-xauth-1.0.7-6.1.el7.x86_64 package, if not present already.
+$ yum install xorg-x11-xauth-1.0.7-6.1.el7.x86_64
+In /etc/ssh/sshd_config file, set below parameter.
+$ cat /etc/ssh/sshd_config | grep X11Forwarding
+X11Forwarding yes
+In /etc/ssh/sshd_config file, set below parameter.
+$ cat /etc/ssh/sshd_config | grep X11UseLocalhost
+X11UseLocalhost no
+In /etc/ssh/ssh_config file, set below parameter.
+$ cat /etc/ssh/ssh_config | grep ForwardX11Trusted
+ForwardX11Trusted yes
+Finally, restart SSHD service.
+$ service sshd restart 
+
+
+ cp .Xauthority ~/.Xauthority
